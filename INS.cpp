@@ -102,6 +102,28 @@ void INS::initSetting()
 	Z.alloc(numofobs, 1);
 	X.alloc(numofstates, 1);
 
+    // Kalman filter settings
+    P.matrix[0][0] = pos_std[0]*pos_std[0];
+    P.matrix[1][1] = pos_std[1]*pos_std[1];
+    P.matrix[2][2] = pos_std[2]*pos_std[2];
+    
+    P.matrix[3][3] = vel_std[0]*vel_std[0];
+    P.matrix[4][4] = vel_std[1]*vel_std[1];
+    P.matrix[5][5] = vel_std[2]*vel_std[2];
+    
+    P.matrix[6][6] = pitch_std * pitch_std;
+    P.matrix[7][7] = roll_std  * roll_std;
+    P.matrix[8][8] = azimuth_std * azimuth_std;
+    
+    if (EstimateScaleFactor)
+    {
+        P.matrix[15][15] = 1.0;
+        P.matrix[16][16] = 1.0;
+        P.matrix[17][17] = 1.0;
+        P.matrix[18][18] = 1.0;
+        P.matrix[19][19] = 1.0;
+        P.matrix[20][20] = 1.0;
+    }
 }
 
 /*****************************************/
@@ -735,7 +757,14 @@ void INS::integration(const double *GPS)
 /*****************************************/
 void INS::CalGravity()
 {
-
+    double a1 = 9.7803267715;
+    double a2 = 0.0052790414;
+    double a3 = 0.0000232718;
+    double a4 = -0.0000030876910891;
+    double a5 = 0.0000000043977311;
+    double a6 = 0.0000000000007211;
+    
+    gravity = a1 * (1 + a2 * sin(pos[0])*sin(pos[0]) + a3 * sin(pos[0])*sin(pos[0])*sin(pos[0])*sin(pos[0])) + (a4 + a5 * sin(pos[0])*sin(pos[0])) * pos[2] + a6 * pos[2] * pos[2];
 }
 
 
@@ -744,7 +773,11 @@ void INS::CalGravity()
 /*****************************************/
 void INS::CalMN()
 {
-
+    double a  = 6378137.0;
+    double e2 = 0.00669437999019758;
+    double W  = sqrt(1.0 - e2 * sin(pos[0]) * sin(pos[0]));
+    N = a / W;
+    M = (a * (1.0 - e2)) /W /W /W;
 }
 
 /*****************************************/
@@ -752,7 +785,19 @@ void INS::CalMN()
 /*****************************************/
 void INS::quatnormalize(double *q)
 {
-
+    double err = q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3];
+    
+    if (err < 1.0000001 && err > 0.999999)
+    {
+    
+    }
+    else
+    {
+        q[0] = (1.5 - err/2) * q[0];
+        q[1] = (1.5 - err/2) * q[1];
+        q[2] = (1.5 - err/2) * q[2];
+        q[3] = (1.5 - err/2) * q[3];
+    }
 }
 
 /*****************************************/
@@ -760,5 +805,15 @@ void INS::quatnormalize(double *q)
 /*****************************************/
 void INS::quat2dcm(double *q)
 {
-
+    dcmCb2n.matrix[0][0] = q[0]*q[0] + q[1]*q[1] - q[2]*q[2] - q[3]*q[3];
+    dcmCb2n.matrix[0][1] = 2 * (q[1]*q[2] - q[0]*q[3]);
+    dcmCb2n.matrix[0][2] = 2 * (q[1]*q[3] + q[0]*q[2]);
+    
+    dcmCb2n.matrix[1][0] = 2 * (q[1]*q[2] + q[0]*q[3]);
+    dcmCb2n.matrix[1][1] = q[0]*q[0] - q[1]*q[1] + q[2]*q[2] - q[3]*q[3];
+    dcmCb2n.matrix[1][2] = 2 * (q[2]*1[3] - q[0]*q[1]);
+    
+    dcmCb2n.matrix[2][0] = 2 * (q[1]*q[3] - q[0]*q[2]);
+    dcmCb2n.matrix[2][1] = 2 * (q[0]*q[1] + q[2]*q[3]);
+    dcmCb2n.matrix[2][2] = q[0]*q[0] - q[1]*q[1] - q[2]*q[2] + q[3]*q[3];
 }
