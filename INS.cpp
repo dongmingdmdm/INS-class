@@ -67,7 +67,12 @@ INS::INS()
 
 INS::~INS()
 {
-
+    P.dealloc();
+    G.dealloc();
+    R.dealloc();
+    H.dealloc();
+    Z.dealloc();
+    X.dealloc();
 }
 
 /*****************************************/
@@ -94,7 +99,7 @@ void INS::initSetting()
 	G.alloc(numofstates, numofstates);
 	R.alloc(numofobs, numofobs);
 	H.alloc(numofobs, numofstates);
-	Z.alloc(numofobs, numofstates);
+	Z.alloc(numofobs, 1);
 	X.alloc(numofstates, 1);
 
 }
@@ -112,6 +117,7 @@ void INS::coarseAlignment()
 /*****************************************/
 void INS::insMechnization(const double *INS_pre, const double *INS)
 {
+    currentTime = INS[0];
 
 	CalGravity();
     CalMN();
@@ -352,6 +358,37 @@ void INS::insPropagation()
     //////////////////////////
     // Build Shape Matrix
     //////////////////////////
+    G.matrix[3][3] = dcmCb2n.matrix[0][0] * accel_bias_std[0];
+    G.matrix[3][4] = dcmCb2n.matrix[0][1] * accel_bias_std[1];
+    G.matrix[3][5] = dcmCb2n.matrix[0][2] * accel_bias_std[2];
+    
+    G.matrix[4][3] = dcmCb2n.matrix[1][0] * accel_bias_std[0];
+    G.matrix[4][4] = dcmCb2n.matrix[1][1] * accel_bias_std[1];
+    G.matrix[4][5] = dcmCb2n.matrix[1][2] * accel_bias_std[2];
+    
+    G.matrix[5][5] = dcmCb2n.matrix[2][0] * accel_bias_std[0];
+    G.matrix[5][6] = dcmCb2n.matrix[2][1] * accel_bias_std[1];
+    G.matrix[5][7] = dcmCb2n.matrix[2][2] * accel_bias_std[2];
+    
+    G.matrix[6][6] = dcmCb2n.matrix[0][0] * gyro_bias_std[0] *M_PI/180.0/3600.0;
+    G.matrix[6][7] = dcmCb2n.matrix[0][1] * gyro_bias_std[1] *M_PI/180.0/3600.0;
+    G.matrix[6][8] = dcmCb2n.matrix[0][2] * gyro_bias_std[2] *M_PI/180.0/3600.0;
+    
+    G.matrix[7][6] = dcmCb2n.matrix[1][0] * gyro_bias_std[0] *M_PI/180.0/3600.0;
+    G.matrix[7][7] = dcmCb2n.matrix[1][1] * gyro_bias_std[1] *M_PI/180.0/3600.0;
+    G.matrix[7][8] = dcmCb2n.matrix[1][2] * gyro_bias_std[2] *M_PI/180.0/3600.0;
+    
+    G.matrix[8][6] = dcmCb2n.matrix[2][0] * gyro_bias_std[0] *M_PI/180.0/3600.0;
+    G.matrix[8][7] = dcmCb2n.matrix[2][1] * gyro_bias_std[1] *M_PI/180.0/3600.0;
+    G.matrix[8][8] = dcmCb2n.matrix[2][2] * gyro_bias_std[2] *M_PI/180.0/3600.0;
+    
+    G.matrix[9][9]   = accel_bias_GM_frqspctrl[0] * sqrt(2.0/accel_bias_GM_corrtime[0]);
+    G.matrix[10][10] = accel_bias_GM_frqspctrl[1] * sqrt(2.0/accel_bias_GM_corrtime[1]);
+    G.matrix[11][11] = accel_bias_GM_frqspctrl[2] * sqrt(2.0/accel_bias_GM_corrtime[2]);
+    
+    G.matrix[12][12] = gyro_bias_GM_frqspctrl[0] * sqrt(2.0/gyro_bias_GM_corrtime[0]);
+    G.matrix[13][13] = gyro_bias_GM_frqspctrl[1] * sqrt(2.0/gyro_bias_GM_corrtime[0]);
+    G.matrix[14][14] = gyro_bias_GM_frqspctrl[2] * sqrt(2.0/gyro_bias_GM_corrtime[0]);
 
 
 	//////////////////////////
@@ -369,6 +406,45 @@ void INS::insPropagation()
         }
     }
     
+    
+    // temp1 = dTrans * G
+    Matrix temp1;
+    temp1.alloc(numofstates, numofstates);
+    Matrix::multiply(dTrans, numofstates, numofstates, G, numofstates, numofstates, temp1, AB);
+    // temp2 = dTrans * G * G' * dTrans'
+    Matrix temp2;
+    temp2.alloc(numofstates, numofstates);
+    Matrix::multiply(temp1, numofstates, numofstates, temp1, numofstates, numofstates, temp2, ABT);
+    // temp3 = G * G';
+    Matrix temp3;
+    temp3.alloc(numofstates, numofstates);
+    Matrix::multiply(G, numofstates, numofstates, G, numofstates, numofstates, temp3, ABT);
+    //temp4 = dTrans * G * G' * dTrans' + G * G'
+    Matrix temp4;
+    temp4.alloc(numofstates, numofstates);
+    Matrix::add(temp2, temp3, numofstates, numofstates, temp4, AB);
+    // Qk = (dTrans * G * G' * dTrans' + G * G') * (T/2)
+    Matrix Qk;
+    Qk.alloc(numofstates, numofstates);
+    Qk.scale(T/2);
+    
+    // temp5 = P * dTrans'
+    Matrix temp5;
+    temp5.alloc(numofstates, numofstates);
+    Matrix::multiply(P, numofstates, numofstates, dTrans, numofstates, numofstates, temp5, ABT);
+    // temp6 = dTrans * P * dTrans'
+    Matrix temp6;
+    temp6.alloc(numofstates, numofstates);
+    Matrix::multiply(dTrans, numofstates, numofstates, temp5, numofstates, numofstates, temp6, AB);
+    // P = dTrans * P * dTrans' + Qk
+    Matrix::add(temp6, Qk, numofstates, numofstates, P, AB);
+    
+    temp1.dealloc();
+    temp2.dealloc();
+    temp3.dealloc();
+    temp4.dealloc();
+    temp5.dealloc();
+    temp6.dealloc();
 }
 
 /*****************************************/
@@ -376,6 +452,280 @@ void INS::insPropagation()
 /*****************************************/
 void INS::integration(const double *GPS)
 {
+    
+    double we = 0.00007292115;
+	double gN[3] = {0.0, 0.0, gravity};
+    
+    currentTime = GPS[0];
+    double T  = currentTime - filterTime;
+    filterTime = currentTime;
+    
+    double Ve = vel[0];
+    double Vn = vel[1];
+    double Vu = vel[2];
+    
+    double lat = pos[0];
+    double h   = pos[2];
+    
+    double fe = fN[0];
+    double fn = fN[1];
+    double fu = fN[2];
+    
+    double MplusH = M + pos[2];
+    double NplusH = N + pos[2];
+    
+    double latDot = Vn/MplusH;
+    double lonDot = Ve/NplusH/cos(lat);
+    
+    double gpsPos[3]     = {GPS[1],  GPS[2],  GPS[3]};
+    double gpsPos_std[3] = {GPS[4],  GPS[5],  GPS[6]};
+    double gpsVel[3]     = {GPS[7],  GPS[8],  GPS[9]};
+    double gpsVel_std[3] = {GPS[10], GPS[11], GPS[12]};
+    
+    /////////////////////////////
+    // Build Transformation Matrix
+    /////////////////////////////
+    /********************/
+    /*Pos err vs pos err*/
+    /********************/
+    F.matrix[0][2] = -latDot/MplusH;
+    F.matrix[1][0] = lonDot/tan(lat);
+    F.matrix[1][2] = -lonDot/NplusH;
+    
+    /********************/
+    /*Pos err vs vel err*/
+    /********************/
+    F.matrix[0][4] = 1/MplusH;
+    F.matrix[1][3] = 1/NplusH/cos(lat);
+    F.matrix[2][5] = 1.0;
+    
+    /********************/
+    /*Vel err vs pos err*/
+    /********************/
+    F.matrix[3][0] = 2*we*(Vu*sin(lat) + Vn*cos(lat)) + Vn*lonDot/cos(lat);
+    F.matrix[4][0] = -2*we*Ve*cos(lat) - Ve*lonDot/cos(lat);
+    F.matrix[5][0] = -2*we*Ve*sin(lat);
+    F.matrix[5][2] = -2*gN[2]/sqrt(M*N);
+    
+    /********************/
+    /*Vel err vs vel err*/
+    /********************/
+    F.matrix[3][3] = -Vu/NplusH + Vn*tan(lat)/NplusH;
+    F.matrix[3][4] = (2*we+lonDot)*sin(lat);
+    F.matrix[3][5] = -(2*we+lonDot)*cos(lat);;
+    F.matrix[4][3] = -F.matrix[3][4];
+    F.matrix[4][4] = -Vu/MplusH;
+    F.matrix[4][5] = -latDot;
+    F.matrix[5][3] = -F.matrix[3][5];
+    F.matrix[5][4] = 2*latDot;
+    
+    /********************/
+    /*Vel err vs att err*/
+    /********************/
+    F.matrix[3][7] = fu;
+    F.matrix[3][8] = -fn;
+    F.matrix[4][6] = -fu;
+    F.matrix[4][8] = fe;
+    F.matrix[5][6] = fn;
+    F.matrix[5][7] = -fe;
+    
+    /********************/
+    /*Vel err vs accel bias*/
+    /********************/
+    F.matrix[3][9] = dcmCb2n.matrix[0][0]; F.matrix[3][10] = dcmCb2n.matrix[0][1]; F.matrix[3][11] = dcmCb2n.matrix[0][2];
+    F.matrix[4][9] = dcmCb2n.matrix[1][0]; F.matrix[4][10] = dcmCb2n.matrix[1][1]; F.matrix[4][11] = dcmCb2n.matrix[1][2];
+    F.matrix[5][9] = dcmCb2n.matrix[2][0]; F.matrix[5][10] = dcmCb2n.matrix[2][1]; F.matrix[5][11] = dcmCb2n.matrix[2][2];
+    
+    if (EstimateScaleFactor) {
+        F.matrix[3][15] = dcmCb2n.matrix[0][0]; F.matrix[3][16] = dcmCb2n.matrix[0][1]; F.matrix[3][17] = dcmCb2n.matrix[0][2];
+        F.matrix[4][15] = dcmCb2n.matrix[1][0]; F.matrix[4][16] = dcmCb2n.matrix[1][1]; F.matrix[4][17] = dcmCb2n.matrix[1][2];
+        F.matrix[5][15] = dcmCb2n.matrix[2][0]; F.matrix[5][16] = dcmCb2n.matrix[2][1]; F.matrix[5][17] = dcmCb2n.matrix[2][2];
+    }
+    
+    
+    /********************/
+    /*Att err vs vel err*/
+    /********************/
+    F.matrix[6][4] = 1/MplusH;
+    F.matrix[7][3] = -1/NplusH;
+    F.matrix[8][3] = -tan(lat)/NplusH;
+    
+    /********************/
+    /*Att err vs att err*/
+    /********************/
+    F.matrix[6][7] = (we + lonDot)*sin(lat);
+    F.matrix[6][8] = -(we + lonDot)*cos(lat);
+    F.matrix[7][6] = -F.matrix[6][7];
+    F.matrix[7][8] = -latDot;
+    F.matrix[8][6] = -F.matrix[6][8];
+    F.matrix[8][7] = -F.matrix[7][8];
+    
+    /********************/
+    /*Att err vs gyro bias*/
+    /********************/
+    F.matrix[6][12] = dcmCb2n.matrix[0][0]; F.matrix[6][13] = dcmCb2n.matrix[0][1]; F.matrix[6][14] = dcmCb2n.matrix[0][2];
+    F.matrix[7][12] = dcmCb2n.matrix[1][0]; F.matrix[7][13] = dcmCb2n.matrix[1][1]; F.matrix[7][14] = dcmCb2n.matrix[1][2];
+    F.matrix[8][12] = dcmCb2n.matrix[2][0]; F.matrix[8][13] = dcmCb2n.matrix[2][1]; F.matrix[8][14] = dcmCb2n.matrix[2][2];
+    
+    if (EstimateScaleFactor) {
+        F.matrix[6][18] = dcmCb2n.matrix[0][0]; F.matrix[6][19] = dcmCb2n.matrix[0][1]; F.matrix[6][20] = dcmCb2n.matrix[0][2];
+        F.matrix[7][18] = dcmCb2n.matrix[1][0]; F.matrix[7][19] = dcmCb2n.matrix[1][1]; F.matrix[7][20] = dcmCb2n.matrix[1][2];
+        F.matrix[8][18] = dcmCb2n.matrix[2][0]; F.matrix[8][19] = dcmCb2n.matrix[2][1]; F.matrix[8][20] = dcmCb2n.matrix[2][2];
+    }
+    
+    /******************/
+    /*accel bias      */
+    /******************/
+    F.matrix[9][9] = -accel_bias_GM_corrtime[0];
+    F.matrix[10][10] = -accel_bias_GM_corrtime[1];
+    F.matrix[11][11] = -accel_bias_GM_corrtime[2];
+    
+    /******************/
+    /* gyro bias      */
+    /******************/
+    F.matrix[12][12] = -gyro_bias_GM_corrtime[0];
+    F.matrix[13][13] = -gyro_bias_GM_corrtime[1];
+    F.matrix[14][14] = -gyro_bias_GM_corrtime[2];
+    
+    //////////////////////////
+    // Build Shape Matrix
+    //////////////////////////
+    G.matrix[3][3] = dcmCb2n.matrix[0][0] * accel_bias_std[0];
+    G.matrix[3][4] = dcmCb2n.matrix[0][1] * accel_bias_std[1];
+    G.matrix[3][5] = dcmCb2n.matrix[0][2] * accel_bias_std[2];
+    
+    G.matrix[4][3] = dcmCb2n.matrix[1][0] * accel_bias_std[0];
+    G.matrix[4][4] = dcmCb2n.matrix[1][1] * accel_bias_std[1];
+    G.matrix[4][5] = dcmCb2n.matrix[1][2] * accel_bias_std[2];
+    
+    G.matrix[5][5] = dcmCb2n.matrix[2][0] * accel_bias_std[0];
+    G.matrix[5][6] = dcmCb2n.matrix[2][1] * accel_bias_std[1];
+    G.matrix[5][7] = dcmCb2n.matrix[2][2] * accel_bias_std[2];
+    
+    G.matrix[6][6] = dcmCb2n.matrix[0][0] * gyro_bias_std[0] *M_PI/180.0/3600.0;
+    G.matrix[6][7] = dcmCb2n.matrix[0][1] * gyro_bias_std[1] *M_PI/180.0/3600.0;
+    G.matrix[6][8] = dcmCb2n.matrix[0][2] * gyro_bias_std[2] *M_PI/180.0/3600.0;
+    
+    G.matrix[7][6] = dcmCb2n.matrix[1][0] * gyro_bias_std[0] *M_PI/180.0/3600.0;
+    G.matrix[7][7] = dcmCb2n.matrix[1][1] * gyro_bias_std[1] *M_PI/180.0/3600.0;
+    G.matrix[7][8] = dcmCb2n.matrix[1][2] * gyro_bias_std[2] *M_PI/180.0/3600.0;
+    
+    G.matrix[8][6] = dcmCb2n.matrix[2][0] * gyro_bias_std[0] *M_PI/180.0/3600.0;
+    G.matrix[8][7] = dcmCb2n.matrix[2][1] * gyro_bias_std[1] *M_PI/180.0/3600.0;
+    G.matrix[8][8] = dcmCb2n.matrix[2][2] * gyro_bias_std[2] *M_PI/180.0/3600.0;
+    
+    G.matrix[9][9]   = accel_bias_GM_frqspctrl[0] * sqrt(2.0/accel_bias_GM_corrtime[0]);
+    G.matrix[10][10] = accel_bias_GM_frqspctrl[1] * sqrt(2.0/accel_bias_GM_corrtime[1]);
+    G.matrix[11][11] = accel_bias_GM_frqspctrl[2] * sqrt(2.0/accel_bias_GM_corrtime[2]);
+    
+    G.matrix[12][12] = gyro_bias_GM_frqspctrl[0] * sqrt(2.0/gyro_bias_GM_corrtime[0]);
+    G.matrix[13][13] = gyro_bias_GM_frqspctrl[1] * sqrt(2.0/gyro_bias_GM_corrtime[0]);
+    G.matrix[14][14] = gyro_bias_GM_frqspctrl[2] * sqrt(2.0/gyro_bias_GM_corrtime[0]);
+    
+    /****************************/
+    /*   Misclosure             */
+    /****************************/
+    double insPos[3] = {0.0};
+    insPos[0] = pos[0] + latDot*T;
+    insPos[1] = pos[1] + lonDot*T;
+    insPos[2] = pos[2] + Vu*T;
+    
+    Z.matrix[0] = insPos[0] - gpsPos[0];
+    Z.matrix[1] = insPos[1] - gpsPos[1];
+    Z.matrix[2] = insPos[2] - gpsPos[2];
+    
+    /************************/
+    /* Build design matrix  */
+    /************************/
+    H.matrix[0][0] = 1;
+    H.matrix[1][1] = 1;
+    H.matrix[2][2] = 1;
+    
+    /************************************/
+    /* Build observation weight matrix  */
+    /************************************/
+    R.matrix[0][0] = gpsPos_std[0];
+    R.matrix[1][1] = gpsPos_std[1];
+    R.matrix[2][2] = gpsPos_std[2];
+    
+    /**********************/
+    /* Kalman Filter      */
+    /**********************/
+    // temp1 = dTrans * G
+    Matrix temp1;
+    temp1.alloc(numofstates, numofstates);
+    Matrix::multiply(dTrans, numofstates, numofstates, G, numofstates, numofstates, temp1, AB);
+    // temp2 = dTrans * G * G' * dTrans'
+    Matrix temp2;
+    temp2.alloc(numofstates, numofstates);
+    Matrix::multiply(temp1, numofstates, numofstates, temp1, numofstates, numofstates, temp2, ABT);
+    // temp3 = G * G';
+    Matrix temp3;
+    temp3.alloc(numofstates, numofstates);
+    Matrix::multiply(G, numofstates, numofstates, G, numofstates, numofstates, temp3, ABT);
+    //temp4 = dTrans * G * G' * dTrans' + G * G'
+    Matrix temp4;
+    temp4.alloc(numofstates, numofstates);
+    Matrix::add(temp2, temp3, numofstates, numofstates, temp4, AB);
+    // Qk = (dTrans * G * G' * dTrans' + G * G') * (T/2)
+    Matrix Qk;
+    Qk.alloc(numofstates, numofstates);
+    Qk.scale(T/2);
+    
+    // temp5 = P * dTrans'
+    Matrix temp5;
+    temp5.alloc(numofstates, numofstates);
+    Matrix::multiply(P, numofstates, numofstates, dTrans, numofstates, numofstates, temp5, ABT);
+    // temp6 = dTrans * P * dTrans'
+    Matrix temp6;
+    temp6.alloc(numofstates, numofstates);
+    Matrix::multiply(dTrans, numofstates, numofstates, temp5, numofstates, numofstates, temp6, AB);
+    // P = dTrans * P * dTrans' + Qk
+    Matrix::add(temp6, Qk, numofstates, numofstates, P, AB);
+    
+    // temp7 = P * H'
+    Matrix temp7;
+    temp7.alloc(numofstates, numofobs);
+    Matrix::multiply(P, numofstates, numofstates, H, numofobs, numofstates, temp7, ABT);
+    // temp8 = H * P * H'
+    Matrix temp8;
+    temp8.alloc(numofobs, numofobs);
+    Matrix::multiply(H, numofobs, numofstates, temp7, numofstates, numofobs, temp8, AB);
+    // temp9 = inv(H * P * H' + R)
+    Matrix temp9;
+    temp9.alloc(numofobs, numofobs);
+    Matrix::add(temp8, R, numofobs, numofobs, temp9, AB);
+    temp9.invert(numofobs);
+    // K = P * H' * inv(H * P * H' + R)
+    Matrix K;
+    K.alloc(numofstates, numofobs);
+    Matrix::multiply(temp7, numofstates, numofobs, temp9, numofobs, numofobs, K, AB);
+    // X = K * Z
+    Matrix::multiply(K, numofstates, numofobs, Z, numofobs, 1, X, AB);
+    // temp10 = K * H
+    Matrix temp10;
+    temp10.alloc(numofstates, numofstates);
+    Matrix::multiply(K, numofstates, numofobs, H, numofobs, numofstates, temp10, AB);
+    // temp11 = - K * H * P
+    Matrix temp11;
+    temp11.alloc(numofstates, numofstates);
+    Matrix::multiply(temp10, numofstates, numofstates, P, numofstates, numofstates, temp11, AB);
+    temp11.scale(-1.0);
+    
+    Matrix::add(P, temp11, numofstates, numofstates, P, AB);
+    
+    
+    temp1.dealloc();
+    temp2.dealloc();
+    temp3.dealloc();
+    temp4.dealloc();
+    temp5.dealloc();
+    temp6.dealloc();
+    temp7.dealloc();
+    temp8.dealloc();
+    temp9.dealloc();
+    temp10.dealloc();
+    temp11.dealloc();
 
 }
 

@@ -11,6 +11,14 @@
 
 #include "Matrix.h"
 
+#ifndef M_PI
+#define M_PI 3.1415926
+#endif
+
+#define AB  0
+#define ATB 1
+#define ABT 2
+
 class INS  
 {
 public:
