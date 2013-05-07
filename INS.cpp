@@ -1,68 +1,68 @@
+// INS.cpp: implementation of the INS class.
 //
-//  INS.cpp
-//  
-//
-//  Created by Bei Huang on 2013-05-06.
-//
-//
+//////////////////////////////////////////////////////////////////////
 
+#include "stdafx.h"
 #include "INS.h"
 #include <stdio.h>
 #include <string.h>
-#include <cmath.h>
+#include <math.h>
 
-using namespace std;
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
 
 INS::INS()
 {
-    memset(pos, 0.0, 3*sizeof(double));
-    memset(pos_std, 0.0, 3*sizeof(double));
-    memset(vel, 0.0, 3*sizeof(double));
-    memset(vel_std, 0.0, 3*sizeof(double));
+	memset(pos, 0, 3*sizeof(double));
+    memset(pos_std, 0, 3*sizeof(double));
+    memset(vel, 0, 3*sizeof(double));
+    memset(vel_std, 0, 3*sizeof(double));
     pitch   = 0.0;
     pitch_std = 0.0;
     roll    = 0.0;
     roll_std = 0.0;
     azimuth = 0.0;
     azimuth_std = 0.0;
-    memset(accel_bias, 0.0, 3*sizeof(double));
-    memset(accel_SF, 0.0, 3*sizeof(double));
-    memset(gyro_bias, 0.0, 3*sizeof(double));
-    memset(gyro_SF, 0.0, 3*sizeof(double));
+    memset(accel_bias, 0, 3*sizeof(double));
+    memset(accel_SF, 0, 3*sizeof(double));
+    memset(gyro_bias, 0, 3*sizeof(double));
+    memset(gyro_SF, 0, 3*sizeof(double));
     
     numofstates = 0;
-    
+    numofobs = 0;
+
     init_start_time = 0.0;
     run_start_time  = 0.0;
     sample_rate     = 50.0;
     
-    memset(accel_bias_std, 0.0, 3*sizeof(double));
-    memset(accel_bias_GM_frqspctrl, 0.0, 3*sizeof(double));
-    memset(accel_bias_GM_corrtime, 0.0, 3*sizeof(double));
+    memset(accel_bias_std, 0, 3*sizeof(double));
+    memset(accel_bias_GM_frqspctrl, 0, 3*sizeof(double));
+    memset(accel_bias_GM_corrtime, 0, 3*sizeof(double));
     
-    memset(gyro_bias_std, 0.0, 3*sizeof(double));
-    memset(gyro_bias_GM_frqspctrl, 0.0, 3*sizeof(double));
-    memset(gyro_bias_GM_corrtime, 0.0, 3*sizeof(double));
+    memset(gyro_bias_std, 0, 3*sizeof(double));
+    memset(gyro_bias_GM_frqspctrl, 0, 3*sizeof(double));
+    memset(gyro_bias_GM_corrtime, 0, 3*sizeof(double));
     
     EstimateScaleFactor = false;
     
-    memset(accel_SF_std, 0.0, 3*sizeof(double));
-    memset(accel_SF_GM_frqspctrl, 0.0, 3*sizeof(double));
-    memset(accel_SF_GM_corrtime, 0.0, 3*sizeof(double));
+    memset(accel_SF_std, 0, 3*sizeof(double));
+    memset(accel_SF_GM_frqspctrl, 0, 3*sizeof(double));
+    memset(accel_SF_GM_corrtime, 0, 3*sizeof(double));
     
-    memset(gyro_SF_std, 0.0, 3*sizeof(double));
-    memset(gyro_SF_GM_frqspctrl, 0.0, 3*sizeof(double));
-    memset(gyro_SF_GM_corrtime, 0.0, 3*sizeof(double));
+    memset(gyro_SF_std, 0, 3*sizeof(double));
+    memset(gyro_SF_GM_frqspctrl, 0, 3*sizeof(double));
+    memset(gyro_SF_GM_corrtime, 0, 3*sizeof(double));
     
     gravity = 9.8;
     M       = 6378137.0;
     N       = 6378137.0;
     
     T = 1/sample_rate;
-    memset(deltaVn, 0.0, 3*sizeof(double));
-    memset(angularInc, 0.0, 3*sizeof(double));
-    memset(velocityInc, 0.0, 3*sizeof(double));
-    memset(qCb2n, 0.0, 4*sizeof(double));
+    memset(deltaVn, 0, 3*sizeof(double));
+    memset(angularInc, 0, 3*sizeof(double));
+    memset(velocityInc, 0, 3*sizeof(double));
+    memset(qCb2n, 0, 4*sizeof(double));
 }
 
 INS::~INS()
@@ -70,13 +70,16 @@ INS::~INS()
 
 }
 
+/*****************************************/
+/* Configure the initial settings for INS*/
+/*****************************************/
 void INS::initSetting()
 {
-    
-    init_start_time = 50000.0;
+	init_start_time = 50000.0;
     run_start_time  = 50000.0;
     sample_rate     = 50.0;
     
+	numofobs = 6;
     
     if (EstimateScaleFactor)
     {
@@ -86,23 +89,36 @@ void INS::initSetting()
     {
         numofstates = 15;
     }
-    
-    
+
+	P.alloc(numofstates, numofstates);
+	G.alloc(numofstates, numofstates);
+	R.alloc(numofobs, numofobs);
+	H.alloc(numofobs, numofstates);
+	Z.alloc(numofobs, numofstates);
+	X.alloc(numofstates, 1);
+
 }
 
-void INS::coraseAlignment()
+/*****************************************/
+/* Coarse Alignment to get initial attitude*/
+/*****************************************/
+void INS::coarseAlignment()
 {
-    
+
 }
 
-void insMechnization(const double * INS_pre, const double * INS)
+/*****************************************/
+/* INS mechanization to integrate raw measurement*/
+/*****************************************/
+void INS::insMechnization(const double *INS_pre, const double *INS)
 {
-    CalGravity();
+
+	CalGravity();
     CalMN();
     
     double prePos[3] = {0.0};
     memcpy(prePos, pos, 3*sizeof(double));
-    double preVel[3] = {0.0};
+	double preVel[3] = {0.0};
     memcpy(preVel, vel, 3*sizeof(double));
     double preDeltaVn[3] = {0.0};
     memcpy(preDeltaVn, INS_pre, 3*sizeof(double));
@@ -125,11 +141,11 @@ void insMechnization(const double * INS_pre, const double * INS)
     WinN[2] = WieN[2] + WenN[2];
     
     double WinB[3] = {0.0};
-    
-    Matrix dcmCn2b(3, 3);
-    dcmCn2b.Matrix_copy(dcmCb2n, 3, 3);
-    dcmCn2b.invert(3);
-    WinB[0] = dcmCn2b.matrix[0][0] * WinN[0] + dcmCn2b.matrix[0][1] * WinN[1] + dcmCn2b.matrix[0][2] * WinN[2];
+
+	Matrix dcmCn2b;
+	dcmCn2b.Matrix_copy(dcmCb2n, 3, 3);
+	dcmCn2b.invert(3);
+	WinB[0] = dcmCn2b.matrix[0][0] * WinN[0] + dcmCn2b.matrix[0][1] * WinN[1] + dcmCn2b.matrix[0][2] * WinN[2];
     WinB[1] = dcmCn2b.matrix[1][0] * WinN[0] + dcmCn2b.matrix[1][1] * WinN[1] + dcmCn2b.matrix[1][2] * WinN[2];
     WinB[2] = dcmCn2b.matrix[2][0] * WinN[0] + dcmCn2b.matrix[2][1] * WinN[1] + dcmCn2b.matrix[2][2] * WinN[2];
     
@@ -137,8 +153,8 @@ void insMechnization(const double * INS_pre, const double * INS)
     Theta[0] = angularInc[0] - WinB[0] * T;
     Theta[1] = angularInc[1] - WinB[1] * T;
     Theta[2] = angularInc[2] - WinB[2] * T;
-    
-    // Attitude update
+
+	// Attitude update
     double modTheta = sqrt(Theta[0]*Theta[0] + Theta[1]*Theta[1] + Theta[2]*Theta[2]);
     double s        = sin(modTheta/2) / modTheta;
     double c        = cos(modTheta/2);
@@ -151,8 +167,8 @@ void insMechnization(const double * INS_pre, const double * INS)
                        A[4]*qCb2n[0]+A[5]*qCb2n[1]+A[6]*qCb2n[2]+A[7]*qCb2n[3],
                        A[8]*qCb2n[0]+A[9]*qCb2n[1]+A[10]*qCb2n[2]+A[11]*qCb2n[3],
                        A[12]*qCb2n[0]+A[13]*qCb2n[1]+A[14]*qCb2n[2]+A[15]*qCb2n[3]};
-    
-    quatnormalize(qOut);
+	
+	quatnormalize(qOut);
     
     quat2dcm(qOut);
     
@@ -200,9 +216,13 @@ void insMechnization(const double * INS_pre, const double * INS)
     pos[1] = prePos[1] + 0.5*(vel[0] + preVel[0])/(N+pos[2])/cos(pos[0]) * T;
 }
 
-void insPropagation()
+/*****************************************/
+/* INS Propagation to update KF          */
+/*****************************************/
+void INS::insPropagation()
 {
-    double we = 0.00007292115;
+	double we = 0.00007292115;
+	double gN[3] = {0.0, 0.0, gravity};
     
     double T  = currentTime - filterTime;
     filterTime = currentTime;
@@ -268,7 +288,7 @@ void insPropagation()
     F.matrix[3][8] = -fn;
     F.matrix[4][6] = -fu;
     F.matrix[4][8] = fe;
-    F.matrix[5][6] = fn'
+    F.matrix[5][6] = fn;
     F.matrix[5][7] = -fe;
     
     /********************/
@@ -332,13 +352,15 @@ void insPropagation()
     //////////////////////////
     // Build Shape Matrix
     //////////////////////////
-    
-    
-    //////////////////////////
+
+
+	//////////////////////////
     // Kalman Filter
     //////////////////////////
-    Matrix eye(numofstates, numofstates);
-    Matrix dTrans(numofstates, numofstates);
+    Matrix eye;
+	eye.alloc(numofstates, numofstates);
+    Matrix dTrans;
+	dTrans.alloc(numofstates, numofstates);
     for (int i = 0; i < numofstates; i++)
     {
         for (int j = 0; j < numofstates; j++)
@@ -347,32 +369,46 @@ void insPropagation()
         }
     }
     
-    
 }
 
-void integration(const double * GPS)
-{
-
-}
-
-void CalGravity(double * pos)
-{
-
-}
-
-void CalMN(double * pos)
-{
-
-}
-
-void quatnormalize(double * q)
-{
-
-}
-
-void quat2dcm(double * q)
+/*****************************************/
+/* Integration to update KF and estimation with GPS*/
+/*****************************************/
+void INS::integration(const double *GPS)
 {
 
 }
 
 
+/*****************************************/
+/* Calculate local gravity               */
+/*****************************************/
+void INS::CalGravity()
+{
+
+}
+
+
+/*****************************************/
+/* Calculate local earth radius, M and N */
+/*****************************************/
+void INS::CalMN()
+{
+
+}
+
+/*****************************************/
+/* Normalize quaternion                  */
+/*****************************************/
+void INS::quatnormalize(double *q)
+{
+
+}
+
+/*****************************************/
+/* Calculate dcm from quaternion */
+/*****************************************/
+void INS::quat2dcm(double *q)
+{
+
+}

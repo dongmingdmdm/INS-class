@@ -1,44 +1,41 @@
+// INS.h: interface for the INS class.
 //
-//  INS.h
-//  
-//
-//  Created by Bei Huang on 2013-05-06.
-//
-//
+//////////////////////////////////////////////////////////////////////
 
-#ifndef ____INS__
-#define ____INS__
+#if !defined(AFX_INS_H__33EDBF07_0DA4_41C5_B245_F302ECDA364D__INCLUDED_)
+#define AFX_INS_H__33EDBF07_0DA4_41C5_B245_F302ECDA364D__INCLUDED_
+
+#if _MSC_VER > 1000
+#pragma once
+#endif // _MSC_VER > 1000
 
 #include "Matrix.h"
-#include <iostream>
 
-class INS
+class INS  
 {
 public:
-    INS();
-    ~INS();
-    
-    
-    Matrix P(21, 21);
-    Matrix Q(21, 21);
-    Matrix R(21, 21);
-    
-    Matrix F(21, 21);
-    Matrix H(6, 21);
-    Matrix Z(6, 1);
-    Matrix X(21, 1);
-    
-    double pos[3];
+	INS();
+	virtual ~INS();
+
+	Matrix P;
+	Matrix G;
+	Matrix R;
+	Matrix F;
+	Matrix H;
+	Matrix Z;
+	Matrix X;
+
+	double pos[3];
     double pos_std[3];
     double vel[3];
     double vel_std[3];
-    Matrix dcmCb2n(3, 3);
+    Matrix dcmCb2n;
     double pitch;
-    double pitch_std[3];
+    double pitch_std;
     double roll;
-    double roll_std[3];
+    double roll_std;
     double azimuth;
-    double azimuth_std[3];
+    double azimuth_std;
     double accel_bias[3];
     double accel_SF[3];
     double gyro_bias[3];
@@ -50,6 +47,7 @@ public:
     double qCb2n[4];         // quaternion form of Cb2n
     double fN[3];
     
+	int numofobs;
     int numofstates;
     
     // Settings for INS class
@@ -59,7 +57,7 @@ public:
     bool   EstimateScaleFactor;
     double currentTime;
     double filterTime;
-    
+
 private:
     
     // Bias specifications for accelerometers and gyros
@@ -86,14 +84,15 @@ private:
     double N;
     
     double T;
-  
+
 public:
     void initSetting();     // set parameters and error specifications
     
     void coarseAlignment(); // coarse alignment = accelerometer leveling + gyro compassing
     
     void insMechnization(const double * INS_pre, const double * INS); // ins mechanization equations
-    void insPropagation();  // ins propagation
+    
+	void insPropagation();  // ins propagation
     
     void integration(const double * GPS);   // integration (loose couple)
     
@@ -105,6 +104,7 @@ private:
     void quatnormalize(double * q);
     
     void quat2dcm(double * q);
-}
 
-#endif /* defined(____INS__) */
+};
+
+#endif // !defined(AFX_INS_H__33EDBF07_0DA4_41C5_B245_F302ECDA364D__INCLUDED_)
