@@ -54,6 +54,9 @@ INS::INS()
     memset(gyro_SF_GM_frqspctrl, 0, 3*sizeof(double));
     memset(gyro_SF_GM_corrtime, 0, 3*sizeof(double));
     
+    memset(sumVel, 0, 3*sizeof(double));
+    memset(sumAng, 0, 3*sizeof(double));
+    
     gravity = 9.8;
     M       = 6378137.0;
     N       = 6378137.0;
@@ -129,9 +132,72 @@ void INS::initSetting()
 /*****************************************/
 /* Coarse Alignment to get initial attitude*/
 /*****************************************/
-void INS::coarseAlignment()
+void INS::coarseAlignment(double *INS)
 {
-
+    double endCoarseTime = run_start_time;
+    
+    currentTime = INS[0];
+    
+    if (currentTime < endCoarseTime && currentTime > init_start_time)
+    {
+        double ax = INS[1];
+        double ay = INS[2];
+        double az = INS[3];
+        double gx = INS[4];
+        double gy = INS[5];
+        double gz = INS[6];
+        double magx = INS[7];
+        double magy = INS[8];
+        double magz = INS[9];
+        
+        velocityInc[0] = ax * T;
+        velocityInc[1] = ay * T;
+        velocityInc[2] = az * T;
+        
+        angularInc[0]  = gx * T;
+        angularInc[1]  = gy * T;
+        angularInc[2]  = gz * T;
+        
+        sumVel[0]     += velocityInc[0];
+        sumVel[1]     += velocityInc[1];
+        sumVel[2]     += velocityInc[2];
+        
+        sumAng[0]     += angularInc[0];
+        sumAng[1]     += angularInc[1];
+        sumAng[2]     += angularInc[2];
+        
+        sumAtt[0]     += magx;
+        sumAtt[1]     += magy;
+        sumAtt[2]     += magz;
+    }
+    else if (currentTime > endCoarseTime)
+    {
+        double summingTime = endCoarseTime - init_start_time;
+        
+        double aveVel[3] = {sumVel[0]/summingTime, sumVel[1]/summingTime, sumVel[2]/summingTime};
+        double aveAng[3] = {sumAng[0]/summingTime, sumAng[1]/summingTime, sumAng[2]/summingTime};
+        
+        roll    = - asin(aveVel[0]/gravity);
+        pitch   =   asin(aveVel[1]/gravity);
+        azimuth =   sumAtt[2]/summingTime;
+        
+        Matrix *R1_pitch  = R1(-pitch);
+        Matrix *R2_roll	 = R2(-roll);
+        Matrix *R3_azi	 = R3(azimuth);
+        
+        Matrix temp;
+        temp.alloc(3,3);
+        Matrix::multiply(*R1_pitch, 3, 3, *R2_roll, 3, 3, temp, AB);
+        Matrix::multiply(*R3_azi,   3, 3, temp,    3, 3, dcmCb2n, AB);
+        
+        dcm2quat();
+        quatnormalize(qCb2n);
+        
+        delete R1_pitch;
+        delete R2_roll;
+        delete R3_azi;
+        temp.dealloc();
+    }
 }
 
 /*****************************************/
@@ -198,7 +264,7 @@ void INS::insMechnization(const double *INS_pre, const double *INS)
 	
 	quatnormalize(qOut);
     
-    quat2dcm(qOut);
+    quat2dcm(qCb2n);
     
     /*****************/
     /*Velocity Update*/
@@ -652,9 +718,9 @@ void INS::integration(const double *GPS)
     insPos[1] = pos[1] + lonDot*T;
     insPos[2] = pos[2] + Vu*T;
     
-    Z.matrix[0] = insPos[0] - gpsPos[0];
-    Z.matrix[1] = insPos[1] - gpsPos[1];
-    Z.matrix[2] = insPos[2] - gpsPos[2];
+    Z.matrix[0][0] = insPos[0] - gpsPos[0];
+    Z.matrix[1][0] = insPos[1] - gpsPos[1];
+    Z.matrix[2][0] = insPos[2] - gpsPos[2];
     
     /************************/
     /* Build design matrix  */
@@ -673,6 +739,18 @@ void INS::integration(const double *GPS)
     /**********************/
     /* Kalman Filter      */
     /**********************/
+	Matrix eye;
+	eye.alloc(numofstates, numofstates);
+    Matrix dTrans;
+	dTrans.alloc(numofstates, numofstates);
+    for (int i = 0; i < numofstates; i++)
+    {
+        for (int j = 0; j < numofstates; j++)
+        {
+            dTrans.matrix[i][j] = eye.matrix[i][j] + F.matrix[i][j]*T;
+        }
+    }
+
     // temp1 = dTrans * G
     Matrix temp1;
     temp1.alloc(numofstates, numofstates);
@@ -793,10 +871,10 @@ void INS::quatnormalize(double *q)
     }
     else
     {
-        q[0] = (1.5 - err/2) * q[0];
-        q[1] = (1.5 - err/2) * q[1];
-        q[2] = (1.5 - err/2) * q[2];
-        q[3] = (1.5 - err/2) * q[3];
+        qCb2n[0] = (1.5 - err/2) * q[0];
+        qCb2n[1] = (1.5 - err/2) * q[1];
+        qCb2n[2] = (1.5 - err/2) * q[2];
+        qCb2n[3] = (1.5 - err/2) * q[3];
     }
 }
 
@@ -811,9 +889,119 @@ void INS::quat2dcm(double *q)
     
     dcmCb2n.matrix[1][0] = 2 * (q[1]*q[2] + q[0]*q[3]);
     dcmCb2n.matrix[1][1] = q[0]*q[0] - q[1]*q[1] + q[2]*q[2] - q[3]*q[3];
-    dcmCb2n.matrix[1][2] = 2 * (q[2]*1[3] - q[0]*q[1]);
+    dcmCb2n.matrix[1][2] = 2 * (q[2]*q[3] - q[0]*q[1]);
     
     dcmCb2n.matrix[2][0] = 2 * (q[1]*q[3] - q[0]*q[2]);
     dcmCb2n.matrix[2][1] = 2 * (q[0]*q[1] + q[2]*q[3]);
     dcmCb2n.matrix[2][2] = q[0]*q[0] - q[1]*q[1] - q[2]*q[2] + q[3]*q[3];
+}
+
+/***********************************/
+/* Calculate quaternion from dcm   */
+/***********************************/
+void INS::dcm2quat()
+{
+    double trace = dcmCb2n.matrix[0][0] + dcmCb2n.matrix[1][1] + dcmCb2n.matrix[2][2];
+    double Pa    = 1 + trace;
+    double Pb    = 1 + 2 * dcmCb2n.matrix[0][0] - trace;
+    double Pc    = 1 + 2 * dcmCb2n.matrix[1][1] - trace;
+    double Pd    = 1 + 2 * dcmCb2n.matrix[2][2] - trace;
+    
+    double a, b, c, d;
+    
+    if (Pa > Pb && Pa > Pc && Pa > Pd)
+    {
+        a = 0.5 * sqrt(Pa);
+        b = (dcmCb2n.matrix[2][1] - dcmCb2n.matrix[1][2]) / (4*a);
+        c = (dcmCb2n.matrix[0][2] - dcmCb2n.matrix[2][0]) / (4*a);
+        d = (dcmCb2n.matrix[1][0] - dcmCb2n.matrix[0][1]) / (4*a);
+    }
+    else if (Pb > Pa && Pb > Pc && Pb > Pd)
+    {
+        b = 0.5 * sqrt(Pb);
+        c = (dcmCb2n.matrix[1][0] - dcmCb2n.matrix[0][1]) / (4*b);
+        d = (dcmCb2n.matrix[0][2] - dcmCb2n.matrix[2][0]) / (4*b);
+        a = (dcmCb2n.matrix[2][1] - dcmCb2n.matrix[1][2]) / (4*b);
+    }
+    else if (Pc > Pa && Pc > Pb && Pc > Pd)
+    {
+        c = 0.5 * sqrt(Pc);
+        d = (dcmCb2n.matrix[2][1] - dcmCb2n.matrix[1][2]) / (4*c);
+        a = (dcmCb2n.matrix[0][2] - dcmCb2n.matrix[2][0]) / (4*c);
+        b = (dcmCb2n.matrix[1][0] - dcmCb2n.matrix[0][1]) / (4*c);
+    }
+    else if (Pd > Pa && Pd > Pb && Pd > Pc)
+    {
+        d = 0.5 * sqrt(Pd);
+        a = (dcmCb2n.matrix[1][0] - dcmCb2n.matrix[0][1]) / (4*d);
+        b = (dcmCb2n.matrix[0][2] - dcmCb2n.matrix[2][0]) / (4*d);
+        c = (dcmCb2n.matrix[2][1] - dcmCb2n.matrix[1][2]) / (4*d);
+    }
+    else
+    {
+    
+    }
+    
+    if (a < 0)
+    {
+        a = -a;
+        b = -b;
+        c = -c;
+        d = -d;
+    }
+    
+    qCb2n[0] = a; qCb2n[1] = b; qCb2n[2] = c; qCb2n[3] = d;
+}
+
+Matrix * INS::R1(double p)
+{
+    Matrix *R = new Matrix(3, 3);
+    
+    R->matrix[0][0] = 1.0;
+    R->matrix[1][1] = 1.0;
+    R->matrix[2][2] = 1.0;
+    
+    R->matrix[1][1] = cos(p);
+    R->matrix[1][2] = sin(p);
+    
+    R->matrix[2][2] = cos(p);
+    R->matrix[2][1] = -sin(p);
+    
+    return R;
+}
+
+Matrix * INS::R2(double r)
+{
+
+    Matrix *R = new Matrix(3, 3);
+    
+    R->matrix[0][0] = 1.0;
+    R->matrix[1][1] = 1.0;
+    R->matrix[2][2] = 1.0;
+    
+    R->matrix[0][0] = cos(r);
+    R->matrix[0][2] = -sin(r);
+    
+    R->matrix[2][2] = cos(r);
+    R->matrix[2][0] = sin(r);
+    
+    return R;
+}
+
+Matrix * INS::R3(double a)
+{
+    
+    Matrix *R = new Matrix(3, 3);
+    
+    R->matrix[0][0] = 1.0;
+    R->matrix[1][1] = 1.0;
+    R->matrix[2][2] = 1.0;
+    
+    R->matrix[0][0] = cos(a);
+    R->matrix[0][1] = sin(a);
+    
+    R->matrix[1][1] = cos(a);
+    R->matrix[1][0] = -sin(a);
+    
+    return R;
 }
