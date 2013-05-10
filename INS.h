@@ -86,6 +86,10 @@ private:
     double gyro_SF_GM_frqspctrl[3];
     double gyro_SF_GM_corrtime[3];
     
+    double sumVel[3];
+    double sumAng[3];
+    double sumAtt[3];
+    
     // Constants used in INS
     double gravity;
     double M;
@@ -96,7 +100,7 @@ private:
 public:
     void initSetting();     // set parameters and error specifications
     
-    void coarseAlignment(); // coarse alignment = accelerometer leveling + gyro compassing
+    void coarseAlignment(double *INS); // coarse alignment = accelerometer leveling + gyro compassing
     
     void insMechnization(const double * INS_pre, const double * INS); // ins mechanization equations
     
@@ -112,6 +116,12 @@ private:
     void quatnormalize(double * q);
     
     void quat2dcm(double * q);
+    
+    void dcm2quat();
+    
+    Matrix * R1(double p);
+    Matrix * R2(double r);
+    Matrix * R3(double a);
 
 };
 

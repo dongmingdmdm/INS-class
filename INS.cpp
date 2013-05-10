@@ -83,11 +83,7 @@ INS::~INS()
 /*****************************************/
 void INS::initSetting()
 {
-	init_start_time = 50000.0;
-    run_start_time  = 50000.0;
-    sample_rate     = 50.0;
-    
-	numofobs = 6;
+	numofobs = 3;
     
     if (EstimateScaleFactor)
     {
